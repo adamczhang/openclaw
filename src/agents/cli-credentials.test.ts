@@ -452,6 +452,67 @@ describe("cli credentials", () => {
     },
   );
 
+  // Codex's `auto` store falls back to an empty auth.json after a failed Keychain read,
+  // so its "Not logged in" alone cannot prove a logout on macOS.
+  it.each([
+    {
+      name: "a denied Keychain read is unreadable, not a logout",
+      platform: "darwin" as const,
+      securityFailure: { status: 51 },
+      expected: {
+        status: "unreadable",
+        reason:
+          "the macOS Keychain did not return the Codex login (`security` exited with code 51)",
+      },
+    },
+    {
+      name: "a missing Keychain item is a real logout",
+      platform: "darwin" as const,
+      securityFailure: { status: 44 },
+      expected: { status: "none" },
+    },
+    {
+      name: "prompts disabled never probes the Keychain",
+      platform: "darwin" as const,
+      allowKeychainPrompt: false,
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+    },
+    {
+      name: "a non-macOS platform never probes the Keychain",
+      platform: "linux" as const,
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+    },
+  ])("after Codex reports Not logged in, $name", (testCase) => {
+    const tempHome = tempDirs.make("openclaw-codex-not-logged-in-");
+    const binDir = tempDirs.make("openclaw-codex-bin-");
+    for (const name of ["codex", "codex.cmd"]) {
+      fs.writeFileSync(path.join(binDir, name), "", { mode: 0o755 });
+    }
+    vi.stubEnv("PATH", binDir);
+    execSyncMock.mockImplementation((command: unknown) => {
+      if (String(command).includes("codex login status")) {
+        throw Object.assign(new Error("Command failed: codex login status"), {
+          status: 1,
+          stdout: "Not logged in\n",
+        });
+      }
+      throw Object.assign(new Error("Command failed: security"), testCase.securityFailure);
+    });
+
+    expect(
+      readCodexCliActiveApiKey({
+        codexHome: tempHome,
+        platform: testCase.platform,
+        execSync: execSyncMock,
+        ...(testCase.allowKeychainPrompt === undefined
+          ? {}
+          : { allowKeychainPrompt: testCase.allowKeychainPrompt }),
+      }),
+    ).toEqual(testCase.expected);
+  });
+
   it.each([
     {
       name: "falls back to auth.json",

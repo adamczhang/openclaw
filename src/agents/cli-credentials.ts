@@ -409,6 +409,7 @@ function readCodexLoginStatus(
   codexHome: string,
 ):
   | { status: "reported"; output: string }
+  | { status: "logged-out" }
   | Exclude<CodexCliActiveApiKeyResult, { status: "active" }> {
   try {
     const output = execSyncImpl("codex login status 2>&1", {
@@ -422,7 +423,7 @@ function readCodexLoginStatus(
     const failure = asOptionalRecord(error);
     const lines = typeof failure?.stdout === "string" ? failure.stdout.split(/\r?\n/u) : [];
     if (lines.some((line) => line.trim() === CODEX_NOT_LOGGED_IN_STATUS)) {
-      return { status: "none" };
+      return { status: "logged-out" };
     }
     if (!isCodexCliOnPath()) {
       return { status: "none" };
@@ -446,6 +447,19 @@ export function readCodexCliActiveApiKey(options?: {
 }): CodexCliActiveApiKeyResult {
   const { execSyncImpl, codexHome } = resolveCodexKeychainParams(options);
   const loginStatus = readCodexLoginStatus(execSyncImpl, codexHome);
+  if (loginStatus.status === "logged-out") {
+    // Codex's `auto` store falls back to an empty auth.json after a failed Keychain read
+    // and then reports "Not logged in", so only a missing Keychain item proves a logout.
+    const keychain = readCodexKeychainAuth({
+      codexHome,
+      allowKeychainPrompt: options?.allowKeychainPrompt,
+      platform: options?.platform,
+      execSync: options?.execSync,
+    });
+    return keychain.status === "unreadable"
+      ? { status: "unreadable", reason: keychain.reason }
+      : { status: "none" };
+  }
   if (loginStatus.status !== "reported") {
     return loginStatus;
   }
