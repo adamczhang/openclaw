@@ -277,18 +277,32 @@ describe("write tool", () => {
     );
   });
 
-  it("treats LF content matching an existing CRLF batch file as a no-op", async () => {
+  it.each(["@echo off\necho hi\n", "@echo off\r\necho hi\r\n"])(
+    "treats an exact write to an existing batch file as a no-op: %j",
+    async (content) => {
+      const filePath = await createTempPath("start.cmd");
+      await fs.writeFile(filePath, content, "utf-8");
+      const tool = createWriteTool(tmpDir);
+
+      const result = await tool.execute("call-1", { path: "start.cmd", content }, undefined);
+
+      expect(result.details).toEqual({ changed: false });
+      await expect(fs.readFile(filePath, "utf-8")).resolves.toBe(content);
+    },
+  );
+
+  it("keeps the requested bytes when overwriting an existing batch file", async () => {
     const filePath = await createTempPath("start.cmd");
-    await fs.writeFile(filePath, "@echo off\r\necho hi\r\n", "utf-8");
+    await fs.writeFile(filePath, "@echo off\r\necho old\r\n", "utf-8");
     const tool = createWriteTool(tmpDir);
 
-    const result = await tool.execute(
+    await tool.execute(
       "call-1",
-      { path: "start.cmd", content: "@echo off\necho hi\n" },
+      { path: "start.cmd", content: "@echo off\necho new\n" },
       undefined,
     );
 
-    expect(result.details).toEqual({ changed: false });
+    await expect(fs.readFile(filePath, "utf-8")).resolves.toBe("@echo off\necho new\n");
   });
 
   it("reports a created file with its authoritative diff", async () => {
