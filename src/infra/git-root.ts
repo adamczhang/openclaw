@@ -4,6 +4,9 @@ import path from "node:path";
 import { readFileWindowFullySync } from "@openclaw/fs-safe/advanced";
 import { safeStatSync } from "@openclaw/fs-safe/path";
 import { isMissingPathError } from "./errors.js";
+import { readFirstLineSync } from "./first-line-read.js";
+
+const GIT_HEAD_MAX_BYTES = 1024 * 1024;
 
 function walkUpFrom<T>(
   startDir: string,
@@ -84,7 +87,7 @@ export function readGitHead(
   if (!headPath) {
     return undefined;
   }
-  const head = fs.readFileSync(headPath, "utf-8").trim();
+  const head = (readFirstLineSync(headPath, { maxBytes: GIT_HEAD_MAX_BYTES }) ?? "").trim();
   if (!head.startsWith("ref:")) {
     return { headPath, ref: null, value: head || null };
   }
