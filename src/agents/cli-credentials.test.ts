@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 
 const execSyncMock = vi.fn();
 const CLI_CREDENTIALS_CACHE_TTL_MS = 15 * 60 * 1000;
@@ -32,6 +33,8 @@ function expectFields(value: unknown, expected: Record<string, unknown>): void {
 }
 
 describe("cli credentials", () => {
+  const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
   beforeAll(async () => {
     ({
       readCodexCliActiveApiKey,
@@ -408,8 +411,8 @@ describe("cli credentials", () => {
       expected: { status: "unreadable", reason: "`codex login status` timed out" },
     },
   ])("separates $name from an unreadable Codex login", ({ installed, failure, expected }) => {
-    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-status-failure-"));
-    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-bin-"));
+    const tempHome = tempDirs.make("openclaw-codex-status-failure-");
+    const binDir = tempDirs.make("openclaw-codex-bin-");
     if (installed) {
       for (const name of ["codex", "codex.cmd"]) {
         fs.writeFileSync(path.join(binDir, name), "", { mode: 0o755 });
@@ -444,7 +447,7 @@ describe("cli credentials", () => {
       },
     },
   ])("when the Codex Keychain read is denied, $name", ({ fileKey, expected }) => {
-    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-keychain-denied-"));
+    const tempHome = tempDirs.make("openclaw-codex-keychain-denied-");
     if (fileKey) {
       fs.writeFileSync(
         path.join(tempHome, "auth.json"),
