@@ -15,6 +15,7 @@ import { resolveExecutableFromPathEnv } from "../infra/executable-path.js";
 import { resolveOsHomeRelativePath } from "../infra/home-dir.js";
 import { loadJsonFileThroughSymlink } from "../infra/json-file.js";
 import { resolveEnvironmentValue } from "../infra/process-env.js";
+import { tryProcessCwd } from "../infra/safe-cwd.js";
 import type { OAuthProvider } from "./auth-profiles/types.js";
 
 const CODEX_CLI_AUTH_FILENAME = "auth.json";
@@ -391,11 +392,15 @@ function formatCodexApiKeyForLoginStatus(key: string): string {
 // status check alone cannot tell "not installed" from "installed but failing".
 function isCodexCliOnPath(): boolean {
   const pathEnv = resolveEnvironmentValue(process.env, "PATH") ?? "";
-  const cwd = process.cwd();
+  // A removed working directory holds no codex to find, so search PATH alone.
+  const cwd = tryProcessCwd();
   // cmd.exe also searches the working directory before PATH.
-  const searchPath = process.platform === "win32" ? `${cwd};${pathEnv}` : pathEnv;
+  const searchPath = process.platform === "win32" && cwd ? `${cwd};${pathEnv}` : pathEnv;
   return Boolean(
-    resolveExecutableFromPathEnv("codex", searchPath, process.env, { cwd, useCache: false }),
+    resolveExecutableFromPathEnv("codex", searchPath, process.env, {
+      ...(cwd ? { cwd } : {}),
+      useCache: false,
+    }),
   );
 }
 

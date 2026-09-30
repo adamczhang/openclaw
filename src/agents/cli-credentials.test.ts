@@ -410,23 +410,47 @@ describe("cli credentials", () => {
       failure: { code: "ETIMEDOUT", status: null, stdout: "" },
       expected: { status: "unreadable", reason: "`codex login status` timed out" },
     },
-  ])("separates $name from an unreadable Codex login", ({ installed, failure, expected }) => {
-    const tempHome = tempDirs.make("openclaw-codex-status-failure-");
-    const binDir = tempDirs.make("openclaw-codex-bin-");
-    if (installed) {
-      for (const name of ["codex", "codex.cmd"]) {
-        fs.writeFileSync(path.join(binDir, name), "", { mode: 0o755 });
+    {
+      name: "a failed login check after the working directory is removed",
+      installed: true,
+      cwdRemoved: true,
+      failure: { status: 1, stdout: "Error checking login status: fixture failure\n" },
+      expected: { status: "unreadable", reason: "Codex could not check its login status" },
+    },
+  ])(
+    "separates $name from an unreadable Codex login",
+    ({ installed, cwdRemoved, failure, expected }) => {
+      const tempHome = tempDirs.make("openclaw-codex-status-failure-");
+      const binDir = tempDirs.make("openclaw-codex-bin-");
+      if (installed) {
+        for (const name of ["codex", "codex.cmd"]) {
+          fs.writeFileSync(path.join(binDir, name), "", { mode: 0o755 });
+        }
       }
-    }
-    vi.stubEnv("PATH", binDir);
-    execSyncMock.mockImplementation(() => {
-      throw Object.assign(new Error("Command failed: codex login status"), failure);
-    });
+      vi.stubEnv("PATH", binDir);
+      execSyncMock.mockImplementation(() => {
+        throw Object.assign(new Error("Command failed: codex login status"), failure);
+      });
+      // Node's process.cwd() throws once a long-running Gateway's launch directory is deleted.
+      const cwdSpy = cwdRemoved
+        ? vi.spyOn(process, "cwd").mockImplementation(() => {
+            throw Object.assign(new Error("ENOENT: process.cwd failed"), { code: "ENOENT" });
+          })
+        : undefined;
 
-    expect(
-      readCodexCliActiveApiKey({ codexHome: tempHome, platform: "linux", execSync: execSyncMock }),
-    ).toEqual(expected);
-  });
+      try {
+        expect(
+          readCodexCliActiveApiKey({
+            codexHome: tempHome,
+            platform: "linux",
+            execSync: execSyncMock,
+          }),
+        ).toEqual(expected);
+      } finally {
+        cwdSpy?.mockRestore();
+      }
+    },
+  );
 
   it.each([
     {
