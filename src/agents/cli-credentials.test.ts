@@ -454,60 +454,94 @@ describe("cli credentials", () => {
 
   // Only Codex's `auto` store falls back to an empty auth.json after a failed Keychain read,
   // so "Not logged in" alone cannot prove a logout there. In the default `file` store the
-  // Keychain is irrelevant and its failures must not override a real logout.
+  // Keychain is irrelevant and its failures must not override a real logout. The effective
+  // store comes from `codex doctor` (it sees managed policy); config.toml is the fallback
+  // for Codex builds without it.
   const DENIED = {
     status: "unreadable",
     reason: "the macOS Keychain did not return the Codex login (`security` exited with code 51)",
   };
+  const AUTO_CONFIG = 'cli_auth_credentials_store = "auto"\n';
   it.each([
     {
-      name: "auto store + denied Keychain read is unreadable, not a logout",
-      config: 'cli_auth_credentials_store = "auto"\n',
+      name: "doctor reports auto (managed, no config.toml) + denied Keychain read is unreadable",
+      doctor: "Auto",
       securityFailure: { status: 51 },
       expected: DENIED,
+      doctorCalls: 1,
     },
     {
-      name: "auto store + missing Keychain item is a real logout",
-      config: 'cli_auth_credentials_store = "auto"\n',
-      securityFailure: { status: 44 },
-      expected: { status: "none" },
+      name: "doctor reports auto, exiting 1 with its report on stdout, is honored",
+      doctor: "Auto",
+      doctorExits: true,
+      securityFailure: { status: 51 },
+      expected: DENIED,
+      doctorCalls: 1,
     },
     {
-      name: "auto store with prompts disabled never probes the Keychain",
-      config: 'cli_auth_credentials_store = "auto"\n',
-      allowKeychainPrompt: false,
+      name: "doctor reports file, overriding an auto config.toml, ignores a denied Keychain read",
+      doctor: "File",
+      config: AUTO_CONFIG,
       securityFailure: { status: 51 },
       expected: { status: "none" },
+      doctorCalls: 1,
     },
     {
-      name: "auto store on a non-macOS platform never probes the Keychain",
-      config: 'cli_auth_credentials_store = "auto"\n',
-      platform: "linux" as const,
+      name: "doctor unavailable falls back to an auto config.toml",
+      config: AUTO_CONFIG,
       securityFailure: { status: 51 },
-      expected: { status: "none" },
+      expected: DENIED,
+      doctorCalls: 1,
     },
     {
-      name: "explicit file store ignores a denied Keychain read",
-      config: 'cli_auth_credentials_store = "file"\n',
-      securityFailure: { status: 51 },
-      expected: { status: "none" },
-    },
-    {
-      name: "no Codex config (default file store) ignores a denied Keychain read",
-      securityFailure: { status: 51 },
-      expected: { status: "none" },
-    },
-    {
-      name: "an auto setting scoped to a config table does not apply",
-      config: 'model = "gpt"\n\n[profiles.work]\ncli_auth_credentials_store = "auto"\n',
-      securityFailure: { status: 51 },
-      expected: { status: "none" },
-    },
-    {
-      name: "a top-level auto setting after other keys and comments applies",
+      name: "doctor unavailable falls back to a top-level auto after other keys and comments",
       config: '# my codex\nmodel = "gpt"\ncli_auth_credentials_store = "auto"  # keychain\n',
       securityFailure: { status: 51 },
       expected: DENIED,
+      doctorCalls: 1,
+    },
+    {
+      name: "doctor unavailable + explicit file config.toml ignores a denied Keychain read",
+      config: 'cli_auth_credentials_store = "file"\n',
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+      doctorCalls: 1,
+    },
+    {
+      name: "doctor unavailable + no Codex config (default file) ignores a denied Keychain read",
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+      doctorCalls: 1,
+    },
+    {
+      name: "doctor unavailable + an auto setting scoped to a config table does not apply",
+      config: 'model = "gpt"\n\n[profiles.work]\ncli_auth_credentials_store = "auto"\n',
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+      doctorCalls: 1,
+    },
+    {
+      name: "a missing Keychain item is a real logout without asking doctor",
+      doctor: "Auto",
+      securityFailure: { status: 44 },
+      expected: { status: "none" },
+      doctorCalls: 0,
+    },
+    {
+      name: "prompts disabled never probes the Keychain or asks doctor",
+      doctor: "Auto",
+      allowKeychainPrompt: false,
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+      doctorCalls: 0,
+    },
+    {
+      name: "a non-macOS platform never probes the Keychain or asks doctor",
+      doctor: "Auto",
+      platform: "linux" as const,
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+      doctorCalls: 0,
     },
   ])("after Codex reports Not logged in, $name", (testCase) => {
     const tempHome = tempDirs.make("openclaw-codex-not-logged-in-");
@@ -519,12 +553,31 @@ describe("cli credentials", () => {
       fs.writeFileSync(path.join(binDir, name), "", { mode: 0o755 });
     }
     vi.stubEnv("PATH", binDir);
+    const doctorReport = JSON.stringify({
+      schemaVersion: 1,
+      checks: { "auth.credentials": { details: { "auth storage mode": testCase.doctor } } },
+    });
     execSyncMock.mockImplementation((command: unknown) => {
       if (String(command).includes("codex login status")) {
         throw Object.assign(new Error("Command failed: codex login status"), {
           status: 1,
           stdout: "Not logged in\n",
         });
+      }
+      if (String(command).includes("codex doctor")) {
+        if (testCase.doctor === undefined) {
+          throw Object.assign(new Error("Command failed: codex doctor"), {
+            status: 2,
+            stdout: "",
+          });
+        }
+        if (testCase.doctorExits) {
+          throw Object.assign(new Error("Command failed: codex doctor"), {
+            status: 1,
+            stdout: doctorReport,
+          });
+        }
+        return doctorReport;
       }
       throw Object.assign(new Error("Command failed: security"), testCase.securityFailure);
     });
@@ -539,6 +592,9 @@ describe("cli credentials", () => {
           : { allowKeychainPrompt: testCase.allowKeychainPrompt }),
       }),
     ).toEqual(testCase.expected);
+    expect(
+      execSyncMock.mock.calls.filter(([command]) => String(command).includes("codex doctor")),
+    ).toHaveLength(testCase.doctorCalls);
   });
 
   it.each([

@@ -413,6 +413,34 @@ function readCodexCredentialsStoreMode(codexHome: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Reads the credential store Codex itself resolved, including system, managed, and
+ * command-line configuration that config.toml alone cannot show. `codex doctor` exits 1
+ * whenever any check fails but still prints its report, so stdout is read either way.
+ */
+function readCodexEffectiveStoreMode(execSyncImpl: ExecSyncFn, codexHome: string) {
+  let output: string;
+  try {
+    output = execSyncImpl("codex doctor --json", {
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, CODEX_HOME: codexHome },
+    });
+  } catch (error) {
+    const stdout = asOptionalRecord(error)?.stdout;
+    output = typeof stdout === "string" ? stdout : "";
+  }
+  try {
+    const report = asOptionalRecord(JSON.parse(output.slice(Math.max(output.indexOf("{"), 0))));
+    const credentials = asOptionalRecord(asOptionalRecord(report?.checks)?.["auth.credentials"]);
+    const mode = asOptionalRecord(credentials?.details)?.["auth storage mode"];
+    return typeof mode === "string" ? mode.toLowerCase() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // cmd.exe exits 1 with a localized message for a missing command, so a failed
 // status check alone cannot tell "not installed" from "installed but failing".
 function isCodexCliOnPath(): boolean {
@@ -475,16 +503,19 @@ export function readCodexCliActiveApiKey(options?: {
   if (loginStatus.status === "logged-out") {
     // Only Codex's `auto` store falls back to an empty auth.json after a failed Keychain read
     // and then reports "Not logged in"; in `file` mode (the default) the Keychain is irrelevant.
-    if (readCodexCredentialsStoreMode(codexHome) !== "auto") {
-      return { status: "none" };
-    }
     const keychain = readCodexKeychainAuth({
       codexHome,
       allowKeychainPrompt: options?.allowKeychainPrompt,
       platform: options?.platform,
       execSync: options?.execSync,
     });
-    return keychain.status === "unreadable"
+    if (keychain.status !== "unreadable") {
+      return { status: "none" };
+    }
+    const storeMode =
+      readCodexEffectiveStoreMode(execSyncImpl, codexHome) ??
+      readCodexCredentialsStoreMode(codexHome);
+    return storeMode === "auto"
       ? { status: "unreadable", reason: keychain.reason }
       : { status: "none" };
   }
