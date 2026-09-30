@@ -247,6 +247,41 @@ describe("write tool", () => {
     },
   );
 
+  it.each([
+    { name: "start.cmd", expected: "@echo off\r\ncall :run\r\n" },
+    { name: "START.BAT", expected: "@echo off\r\ncall :run\r\n" },
+    { name: "start.sh", expected: "@echo off\r\ncall :run\n" },
+  ])("persists $name with its platform line endings", async ({ name, expected }) => {
+    const filePath = await createTempPath(name);
+    const tool = createWriteTool(tmpDir);
+
+    const result = await tool.execute(
+      "call-1",
+      { path: name, content: "@echo off\r\ncall :run\n" },
+      undefined,
+    );
+
+    await expect(fs.readFile(filePath, "utf-8")).resolves.toBe(expected);
+    const tc0 = expectDefined(result.content[0], "result.content[0] test invariant");
+    expect("text" in tc0 ? tc0.text : "").toContain(
+      `Successfully wrote ${Buffer.byteLength(expected)} bytes`,
+    );
+  });
+
+  it("treats LF content matching an existing CRLF batch file as a no-op", async () => {
+    const filePath = await createTempPath("start.cmd");
+    await fs.writeFile(filePath, "@echo off\r\necho hi\r\n", "utf-8");
+    const tool = createWriteTool(tmpDir);
+
+    const result = await tool.execute(
+      "call-1",
+      { path: "start.cmd", content: "@echo off\necho hi\n" },
+      undefined,
+    );
+
+    expect(result.details).toEqual({ changed: false });
+  });
+
   it("reports a created file with its authoritative diff", async () => {
     await createTempPath("created.txt");
     const content = "first\nsecond\n";

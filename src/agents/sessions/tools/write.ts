@@ -8,6 +8,7 @@ import { dirname } from "node:path";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { isMissingPathError } from "../../../infra/errors.js";
 import { captureAgentToolSourceExecutionGuard } from "../../agent-tool-source-execution-guard.js";
+import { normalizeNewFileLineEndings } from "../../line-endings.js";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
 import { getLanguageFromPath, highlightCode } from "../../modes/interactive/theme/theme.js";
 import type { AgentTool, AgentToolResult } from "../../runtime/index.js";
@@ -401,9 +402,11 @@ export function createWriteToolDefinition(
     promptGuidelines: ["Use only new files/complete rewrites."],
     parameters: writeSchema,
     outputSchema: WriteToolOutputSchema,
-    async execute(_toolCallId, { path, content }, signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, { path, content: requestedContent }, signal, _onUpdate, _ctx) {
       const assertCurrent = captureAgentToolSourceExecutionGuard();
       const absolutePath = resolvePath(path, cwd);
+      // Prechecks, receipts, and readback verification all use the persisted bytes.
+      const content = normalizeNewFileLineEndings(absolutePath, requestedContent);
       const dir = dirname(absolutePath);
       const queueKey = resolveFileMutationQueueKey(absolutePath, ops.resolveQueueKey, signal);
       return withFileMutationQueueKeyResolution(queueKey, async () => {
