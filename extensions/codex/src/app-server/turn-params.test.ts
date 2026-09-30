@@ -74,14 +74,28 @@ describe("buildTurnStartParams session link context", () => {
     },
   );
 
-  it("omits the entry when the host resolved no link", () => {
-    const turn = buildTurnStartParams(createParams("/tmp/session.jsonl", "/repo"), {
-      threadId: "thread-1",
-      cwd: "/repo",
-      appServer: createAppServerOptions(),
-    });
+  it("supersedes an earlier link with a stable no-link value once the host stops resolving one", () => {
+    const params = createParams("/tmp/session.jsonl", "/repo");
+    const options = { threadId: "thread-1", cwd: "/repo", appServer: createAppServerOptions() };
+    const sessionContext = () =>
+      buildTurnStartParams(params, options).additionalContext?.openclaw_session?.value;
 
-    expect(turn.additionalContext).not.toHaveProperty("openclaw_session");
+    params.sessionUrl = sessionUrl;
+    const linked = sessionContext();
+    // The operator removes gateway.publicOrigin while the native thread is warm. Codex cannot
+    // retract the fragment it already emitted, so the next turn's value has to change.
+    params.sessionUrl = undefined;
+    const unlinked = sessionContext();
+    params.sessionUrl = sessionUrl;
+    const relinked = sessionContext();
+
+    expect(linked).toBe(`Runtime: sessionUrl=${sessionUrl}`);
+    expect(unlinked).toContain("no session link is available");
+    // A `sessionUrl=` token here could be mistaken for a link by skills that key on it.
+    expect(unlinked).not.toContain("sessionUrl=");
+    expect(relinked).toBe(linked);
+    params.sessionUrl = undefined;
+    expect(sessionContext()).toBe(unlinked);
   });
 });
 
@@ -153,6 +167,10 @@ describe("buildTurnStartParams temporal context", () => {
       openclaw_active_computer: {
         kind: "application",
         value: "Current active computer: active_node=unknown (host presence unavailable)",
+      },
+      openclaw_session: {
+        kind: "application",
+        value: expect.stringContaining("no session link is available"),
       },
       openclaw_source_delivery: {
         kind: "application",
@@ -383,6 +401,10 @@ describe("buildTurnStartParams native supervised settings", () => {
         openclaw_active_computer: {
           kind: "application",
           value: "Current active computer: active_node=unknown (host presence unavailable)",
+        },
+        openclaw_session: {
+          kind: "application",
+          value: expect.stringContaining("no session link is available"),
         },
         openclaw_source_delivery: {
           kind: "application",

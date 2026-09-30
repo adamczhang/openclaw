@@ -4868,14 +4868,14 @@ describe("runCodexAppServerAttempt", () => {
     await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
     await run;
 
-    const turnStart = harness.requests.find((request) => request.method === "turn/start");
-    expect(
-      (
-        turnStart?.params as {
-          additionalContext?: Record<string, { kind: string; value: string }>;
-        }
-      ).additionalContext?.openclaw_session,
-    ).toEqual({ kind: "application", value: `Runtime: sessionUrl=${sessionUrl}` });
+    const turnStartParams = harness.requests.find((request) => request.method === "turn/start")
+      ?.params as
+      | { additionalContext?: Record<string, { kind: string; value: string }> }
+      | undefined;
+    expect(turnStartParams?.additionalContext?.openclaw_session).toEqual({
+      kind: "application",
+      value: `Runtime: sessionUrl=${sessionUrl}`,
+    });
     // Developer instructions feed the thread binding fingerprint; carrying the link there
     // would rotate every existing native thread on upgrade.
     const threadStart = harness.requests.find((request) => request.method === "thread/start");
