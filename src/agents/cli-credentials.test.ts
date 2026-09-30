@@ -306,7 +306,10 @@ describe("cli credentials", () => {
         platform: "darwin",
         execSync: execSyncMock,
       }),
-    ).toEqual({ type: "api_key", provider: "openai", key: "keychain-api-key" });
+    ).toEqual({
+      status: "active",
+      credential: { type: "api_key", provider: "openai", key: "keychain-api-key" },
+    });
   });
 
   it("prefers active Codex OAuth over a stale file API key", () => {
@@ -324,7 +327,7 @@ describe("cli credentials", () => {
         platform: "darwin",
         execSync: execSyncMock,
       }),
-    ).toBeNull();
+    ).toEqual({ status: "none" });
     expect(execSyncMock).toHaveBeenCalledTimes(1);
   });
 
@@ -347,7 +350,10 @@ describe("cli credentials", () => {
         platform: "darwin",
         execSync: execSyncMock,
       }),
-    ).toEqual({ type: "api_key", provider: "openai", key: "active-file-api-key" });
+    ).toEqual({
+      status: "active",
+      credential: { type: "api_key", provider: "openai", key: "active-file-api-key" },
+    });
     expect(execSyncMock).toHaveBeenCalledTimes(2);
   });
 
@@ -366,7 +372,96 @@ describe("cli credentials", () => {
         platform: "linux",
         execSync: execSyncMock,
       }),
-    ).toEqual({ type: "api_key", provider: "openai", key: "legacy-file-api-key" });
+    ).toEqual({
+      status: "active",
+      credential: { type: "api_key", provider: "openai", key: "legacy-file-api-key" },
+    });
+  });
+
+  it.each([
+    {
+      name: "a confirmed logout",
+      installed: true,
+      failure: { status: 1, stdout: "WARNING: fixture notice\nNot logged in\n" },
+      expected: { status: "none" },
+    },
+    {
+      // cmd.exe exits 1 with a localized message, so only the PATH lookup identifies this.
+      name: "a missing codex command",
+      installed: false,
+      failure: { status: 1, stdout: "fixture shell: codex is not a command\n" },
+      expected: { status: "none" },
+    },
+    {
+      name: "a failed Codex login check",
+      installed: true,
+      failure: {
+        status: 1,
+        stdout: 'Error checking login status: invalid value "sk-leaked-secret"\n',
+      },
+      expected: { status: "unreadable", reason: "Codex could not check its login status" },
+    },
+    {
+      name: "a timed-out login check",
+      installed: true,
+      failure: { code: "ETIMEDOUT", status: null, stdout: "" },
+      expected: { status: "unreadable", reason: "`codex login status` timed out" },
+    },
+  ])("separates $name from an unreadable Codex login", ({ installed, failure, expected }) => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-status-failure-"));
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-bin-"));
+    if (installed) {
+      for (const name of ["codex", "codex.cmd"]) {
+        fs.writeFileSync(path.join(binDir, name), "", { mode: 0o755 });
+      }
+    }
+    vi.stubEnv("PATH", binDir);
+    execSyncMock.mockImplementation(() => {
+      throw Object.assign(new Error("Command failed: codex login status"), failure);
+    });
+
+    expect(
+      readCodexCliActiveApiKey({ codexHome: tempHome, platform: "linux", execSync: execSyncMock }),
+    ).toEqual(expected);
+  });
+
+  it.each([
+    {
+      name: "falls back to auth.json",
+      fileKey: "active-file-api-key",
+      expected: {
+        status: "active",
+        credential: { type: "api_key", provider: "openai", key: "active-file-api-key" },
+      },
+    },
+    {
+      name: "reports the Keychain failure without auth.json",
+      fileKey: undefined,
+      expected: {
+        status: "unreadable",
+        reason:
+          "the macOS Keychain did not return the Codex login (`security` exited with code 51)",
+      },
+    },
+  ])("when the Codex Keychain read is denied, $name", ({ fileKey, expected }) => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-keychain-denied-"));
+    if (fileKey) {
+      fs.writeFileSync(
+        path.join(tempHome, "auth.json"),
+        JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: fileKey }),
+        "utf8",
+      );
+    }
+    execSyncMock.mockImplementation((command: unknown) => {
+      if (String(command).includes("codex login status")) {
+        return "Logged in using an API key - active-f***i-key";
+      }
+      throw Object.assign(new Error("Command failed: security"), { status: 51 });
+    });
+
+    expect(
+      readCodexCliActiveApiKey({ codexHome: tempHome, platform: "darwin", execSync: execSyncMock }),
+    ).toEqual(expected);
   });
 
   it("treats an empty Codex auth.json API-key field as API-key mode", () => {
