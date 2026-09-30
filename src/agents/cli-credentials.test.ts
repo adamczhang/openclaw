@@ -452,41 +452,69 @@ describe("cli credentials", () => {
     },
   );
 
-  // Codex's `auto` store falls back to an empty auth.json after a failed Keychain read,
-  // so its "Not logged in" alone cannot prove a logout on macOS.
+  // Only Codex's `auto` store falls back to an empty auth.json after a failed Keychain read,
+  // so "Not logged in" alone cannot prove a logout there. In the default `file` store the
+  // Keychain is irrelevant and its failures must not override a real logout.
+  const DENIED = {
+    status: "unreadable",
+    reason: "the macOS Keychain did not return the Codex login (`security` exited with code 51)",
+  };
   it.each([
     {
-      name: "a denied Keychain read is unreadable, not a logout",
-      platform: "darwin" as const,
+      name: "auto store + denied Keychain read is unreadable, not a logout",
+      config: 'cli_auth_credentials_store = "auto"\n',
       securityFailure: { status: 51 },
-      expected: {
-        status: "unreadable",
-        reason:
-          "the macOS Keychain did not return the Codex login (`security` exited with code 51)",
-      },
+      expected: DENIED,
     },
     {
-      name: "a missing Keychain item is a real logout",
-      platform: "darwin" as const,
+      name: "auto store + missing Keychain item is a real logout",
+      config: 'cli_auth_credentials_store = "auto"\n',
       securityFailure: { status: 44 },
       expected: { status: "none" },
     },
     {
-      name: "prompts disabled never probes the Keychain",
-      platform: "darwin" as const,
+      name: "auto store with prompts disabled never probes the Keychain",
+      config: 'cli_auth_credentials_store = "auto"\n',
       allowKeychainPrompt: false,
       securityFailure: { status: 51 },
       expected: { status: "none" },
     },
     {
-      name: "a non-macOS platform never probes the Keychain",
+      name: "auto store on a non-macOS platform never probes the Keychain",
+      config: 'cli_auth_credentials_store = "auto"\n',
       platform: "linux" as const,
       securityFailure: { status: 51 },
       expected: { status: "none" },
     },
+    {
+      name: "explicit file store ignores a denied Keychain read",
+      config: 'cli_auth_credentials_store = "file"\n',
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+    },
+    {
+      name: "no Codex config (default file store) ignores a denied Keychain read",
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+    },
+    {
+      name: "an auto setting scoped to a config table does not apply",
+      config: 'model = "gpt"\n\n[profiles.work]\ncli_auth_credentials_store = "auto"\n',
+      securityFailure: { status: 51 },
+      expected: { status: "none" },
+    },
+    {
+      name: "a top-level auto setting after other keys and comments applies",
+      config: '# my codex\nmodel = "gpt"\ncli_auth_credentials_store = "auto"  # keychain\n',
+      securityFailure: { status: 51 },
+      expected: DENIED,
+    },
   ])("after Codex reports Not logged in, $name", (testCase) => {
     const tempHome = tempDirs.make("openclaw-codex-not-logged-in-");
     const binDir = tempDirs.make("openclaw-codex-bin-");
+    if (testCase.config !== undefined) {
+      fs.writeFileSync(path.join(tempHome, "config.toml"), testCase.config, "utf8");
+    }
     for (const name of ["codex", "codex.cmd"]) {
       fs.writeFileSync(path.join(binDir, name), "", { mode: 0o755 });
     }
@@ -504,7 +532,7 @@ describe("cli credentials", () => {
     expect(
       readCodexCliActiveApiKey({
         codexHome: tempHome,
-        platform: testCase.platform,
+        platform: testCase.platform ?? "darwin",
         execSync: execSyncMock,
         ...(testCase.allowKeychainPrompt === undefined
           ? {}

@@ -388,6 +388,31 @@ function formatCodexApiKeyForLoginStatus(key: string): string {
   return key.length <= 13 ? "***" : `${key.slice(0, 8)}***${key.slice(-5)}`;
 }
 
+/**
+ * Reads Codex's top-level `cli_auth_credentials_store` from its user config.
+ * Unset, unreadable, or table-scoped values mean Codex's default `file` store.
+ */
+function readCodexCredentialsStoreMode(codexHome: string): string | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(codexHome, "config.toml"), "utf8");
+  } catch {
+    return undefined;
+  }
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[")) {
+      // Top-level keys precede the first table header; later ones are profile-scoped.
+      return undefined;
+    }
+    const match = /^cli_auth_credentials_store\s*=\s*["']([a-z]+)["']/u.exec(trimmed);
+    if (match) {
+      return match[1];
+    }
+  }
+  return undefined;
+}
+
 // cmd.exe exits 1 with a localized message for a missing command, so a failed
 // status check alone cannot tell "not installed" from "installed but failing".
 function isCodexCliOnPath(): boolean {
@@ -448,8 +473,11 @@ export function readCodexCliActiveApiKey(options?: {
   const { execSyncImpl, codexHome } = resolveCodexKeychainParams(options);
   const loginStatus = readCodexLoginStatus(execSyncImpl, codexHome);
   if (loginStatus.status === "logged-out") {
-    // Codex's `auto` store falls back to an empty auth.json after a failed Keychain read
-    // and then reports "Not logged in", so only a missing Keychain item proves a logout.
+    // Only Codex's `auto` store falls back to an empty auth.json after a failed Keychain read
+    // and then reports "Not logged in"; in `file` mode (the default) the Keychain is irrelevant.
+    if (readCodexCredentialsStoreMode(codexHome) !== "auto") {
+      return { status: "none" };
+    }
     const keychain = readCodexKeychainAuth({
       codexHome,
       allowKeychainPrompt: options?.allowKeychainPrompt,
