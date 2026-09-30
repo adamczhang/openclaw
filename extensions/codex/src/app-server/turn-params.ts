@@ -151,6 +151,15 @@ export function buildTurnStartParams(
       ].join("\n"),
     },
   };
+  // Codex re-emits a key only when its value changes, so this stable link costs tokens once per
+  // thread, and unlike developer instructions it cannot rotate the thread binding fingerprint.
+  // The host owns the URL; embedded and CLI runs carry the same `sessionUrl=` Runtime fact.
+  if (params.sessionUrl) {
+    additionalContext.openclaw_session = {
+      kind: "application",
+      value: `Runtime: sessionUrl=${params.sessionUrl}`,
+    };
+  }
   // Untrusted context exposes authenticated attribution without promoting human-controlled labels.
   if (currentSender) {
     additionalContext.openclaw_current_sender = {

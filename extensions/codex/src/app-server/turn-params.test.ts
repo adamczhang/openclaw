@@ -49,6 +49,42 @@ describe("buildTurnStartParams active computer context", () => {
   );
 });
 
+describe("buildTurnStartParams session link context", () => {
+  const sessionUrl = "https://gateway.example/chat/main/founder/x-20260929";
+
+  it.each([false, true])(
+    "gives the model the host-prepared session link on every turn (native settings=%s)",
+    (preserveNativeTurnSettings) => {
+      const params = createParams("/tmp/session.jsonl", "/repo");
+      params.sessionUrl = sessionUrl;
+      const options = {
+        threadId: "thread-1",
+        cwd: "/repo",
+        appServer: createAppServerOptions(),
+        preserveNativeTurnSettings,
+      };
+
+      // Codex re-emits a key only when its value changes, so repeated turns must stay identical.
+      for (let turnIndex = 0; turnIndex < 2; turnIndex += 1) {
+        expect(buildTurnStartParams(params, options).additionalContext?.openclaw_session).toEqual({
+          kind: "application",
+          value: `Runtime: sessionUrl=${sessionUrl}`,
+        });
+      }
+    },
+  );
+
+  it("omits the entry when the host resolved no link", () => {
+    const turn = buildTurnStartParams(createParams("/tmp/session.jsonl", "/repo"), {
+      threadId: "thread-1",
+      cwd: "/repo",
+      appServer: createAppServerOptions(),
+    });
+
+    expect(turn.additionalContext).not.toHaveProperty("openclaw_session");
+  });
+});
+
 describe("buildTurnStartParams model thinking defaults", () => {
   it.each([
     { thinking: undefined, thinkingDefault: undefined, expected: "medium" },
