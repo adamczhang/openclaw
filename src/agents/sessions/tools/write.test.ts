@@ -248,18 +248,27 @@ describe("write tool", () => {
   );
 
   it.each([
-    { name: "start.cmd", expected: "@echo off\r\ncall :run\r\n" },
-    { name: "START.BAT", expected: "@echo off\r\ncall :run\r\n" },
-    { name: "start.sh", expected: "@echo off\r\ncall :run\n" },
-  ])("persists $name with its platform line endings", async ({ name, expected }) => {
+    {
+      name: "start.cmd",
+      content: "@echo off\r\ncall :run\n",
+      expected: "@echo off\r\ncall :run\r\n",
+    },
+    {
+      name: "START.BAT",
+      content: "@echo off\r\ncall :run\n",
+      expected: "@echo off\r\ncall :run\r\n",
+    },
+    {
+      name: "lone-cr.cmd",
+      content: "@echo off\rcall :run\r",
+      expected: "@echo off\r\ncall :run\r\n",
+    },
+    { name: "start.sh", content: "@echo off\r\ncall :run\n", expected: "@echo off\r\ncall :run\n" },
+  ])("persists $name with its platform line endings", async ({ name, content, expected }) => {
     const filePath = await createTempPath(name);
     const tool = createWriteTool(tmpDir);
 
-    const result = await tool.execute(
-      "call-1",
-      { path: name, content: "@echo off\r\ncall :run\n" },
-      undefined,
-    );
+    const result = await tool.execute("call-1", { path: name, content }, undefined);
 
     await expect(fs.readFile(filePath, "utf-8")).resolves.toBe(expected);
     const tc0 = expectDefined(result.content[0], "result.content[0] test invariant");

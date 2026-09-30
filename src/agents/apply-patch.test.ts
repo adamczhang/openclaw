@@ -106,14 +106,14 @@ describe("applyPatch", () => {
 *** End Patch`;
 
   it.each([
-    { name: "run.cmd", expected: "@echo off\r\ncall :run\r\n" },
-    { name: "notes.txt", expected: "@echo off\ncall :run\n" },
-  ])("adds $name with its platform line endings", async ({ name, expected }) => {
+    { name: "run.cmd", lines: "+@echo off\n+call :run", expected: "@echo off\r\ncall :run\r\n" },
+    { name: "lone-cr.cmd", lines: "+@echo off\rcall :run", expected: "@echo off\r\ncall :run\r\n" },
+    { name: "notes.txt", lines: "+@echo off\n+call :run", expected: "@echo off\ncall :run\n" },
+  ])("adds $name with its platform line endings", async ({ name, lines, expected }) => {
     await withTempDir(async (dir) => {
-      await applyPatch(
-        `*** Begin Patch\n*** Add File: ${name}\n+@echo off\n+call :run\n*** End Patch`,
-        { cwd: dir },
-      );
+      await applyPatch(`*** Begin Patch\n*** Add File: ${name}\n${lines}\n*** End Patch`, {
+        cwd: dir,
+      });
 
       await expect(fs.readFile(path.join(dir, name), "utf8")).resolves.toBe(expected);
     });

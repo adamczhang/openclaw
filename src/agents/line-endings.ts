@@ -28,5 +28,5 @@ export function normalizeNewFileLineEndings(filePath: string, content: string): 
   if (!WINDOWS_BATCH_EXTENSION.test(filePath)) {
     return content;
   }
-  return content.replace(/\r?\n/g, "\r\n");
+  return content.replace(/\r\n|\r|\n/g, "\r\n");
 }
